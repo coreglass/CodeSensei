@@ -1,0 +1,25 @@
+{
+  "name": "code-sensei",
+  "version": "0.1.0",
+  "description": "教学型编程助手",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "tauri": "tauri"
+  },
+  "dependencies": {
+    "@element-plus/icons-vue": "^2.3.1",
+    "@tauri-apps/plugin-dialog": "^2.6.0",
+    "element-plus": "^2.9.1",
+    "monaco-editor": "^0.52.0",
+    "vue": "^3.5.13",
+    "vue-router": "^5.0.2"
+  },
+  "devDependencies": {
+    "@tauri-apps/api": "^2.1.0",
+    "@tauri-apps/cli": "^2.1.0",
+    "@vitejs/plugin-vue": "^5.2.1",
+    "vite": "^6.0.3"
+  }
+}

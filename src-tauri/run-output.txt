@@ -1,0 +1,27 @@
+   Compiling code-sensei v0.1.0 (D:\code\CodeSensei\src-tauri)
+warning: method `get_files` is never used
+   --> src\db.rs:135:18
+    |
+ 10 | impl Database {
+    | ------------- method in this implementation
+...
+135 |     pub async fn get_files(&self, project_id: &str) -> Result<Vec<(String, String, String)>> {
+    |                  ^^^^^^^^^
+    |
+    = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: `code-sensei` (bin "code-sensei") generated 1 warning
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 8.71s
+     Running `target\debug\code-sensei.exe`
+
+thread '<unnamed>' (17148) panicked at src\main.rs:148:54:
+Failed to initialize database: error returned from database: (code: 14) unable to open database file
+
+Caused by:
+    (code: 14) unable to open database file
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+thread 'main' (21600) panicked at src\main.rs:151:14:
+Failed to join database initialization thread: Any { .. }
+[0204/211709.964:ERROR:ui\gfx\win\window_impl.cc:124] Failed to unregister class Chrome_WidgetWin_0. Error = 1412
+error: process didn't exit successfully: `target\debug\code-sensei.exe` (exit code: 101)
