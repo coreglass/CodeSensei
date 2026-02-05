@@ -1,11 +1,16 @@
 // Prevents additional console window on Windows in release builds
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod claude;
+mod claude_node;
+
 use std::fs;
 use std::path::PathBuf;
 use serde::{Deserialize, Serialize};
 use serde_json;
-use tauri::Manager;
+use tauri::{Manager, Emitter};
+use claude::{save_api_key, get_api_key};
+use claude_node::{ClaudeAgentNode, RequirementUpdateRequest, CreateFilesRequest, AgentResponse};
 
 #[derive(Clone)]
 struct AppState {
@@ -634,6 +639,162 @@ fn copy_dir_recursive(source: &PathBuf, target: &PathBuf) -> std::io::Result<()>
     Ok(())
 }
 
+// ===== Claude Agent Commands =====
+
+/// 使用 Claude Code (Node.js SDK) 更新需求文档
+#[tauri::command]
+async fn update_requirement_with_agent(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+    project_id: String,
+    user_input: String,
+) -> Result<AgentResponse, String> {
+    // 1. 获取项目元数据目录
+    let app_project_dir = state.projects_dir.join(&project_id);
+    let meta_file = app_project_dir.join("project.json");
+
+    // 2. 读取项目元数据
+    let project: Project = if meta_file.exists() {
+        let meta_content = fs::read_to_string(&meta_file)
+            .map_err(|e| format!("Failed to read project.json: {}", e))?;
+        serde_json::from_str(&meta_content)
+            .map_err(|e| format!("Failed to parse project.json: {}", e))?
+    } else {
+        return Err("Project not found".to_string());
+    };
+
+    // 3. 确定需求文档的保存位置
+    let requirement_path = if let Some(ref root_path) = project.root_path {
+        PathBuf::from(root_path).join("requirement.md")
+    } else {
+        app_project_dir.join("requirement.md")
+    };
+
+    let requirement_path_display = requirement_path.display().to_string();
+
+    // 4. 确定项目根目录（用于 Claude Code 工作目录）
+    let project_root = if let Some(ref root_path) = project.root_path {
+        PathBuf::from(root_path)
+    } else {
+        app_project_dir.clone()
+    };
+
+    // 5. 创建 Claude Agent Node 并调用
+    let agent = ClaudeAgentNode::new();
+
+    // 读取现有的需求文档内容（如果存在）
+    let current_requirement = if requirement_path.exists() {
+        fs::read_to_string(&requirement_path).unwrap_or_default()
+    } else {
+        String::new()
+    };
+
+    let req = RequirementUpdateRequest {
+        user_input,
+        project_path: project_root.display().to_string(),
+        current_content: current_requirement,
+    };
+
+    let response = agent.update_requirement(&app, req).await?;
+
+    // 6. 保存返回的内容到 requirement.md
+    if let Some(doc_content) = &response.document_content {
+        // 确保父目录存在
+        if let Some(parent) = requirement_path.parent() {
+            fs::create_dir_all(parent)
+                .map_err(|e| format!("Failed to create directory: {}", e))?;
+        }
+
+        // 写入文件
+        fs::write(&requirement_path, doc_content)
+            .map_err(|e| format!("Failed to save requirement.md at {}: {}", requirement_path_display, e))?;
+
+        // 发送事件通知前端刷新需求文档
+        app.emit("requirement-updated", serde_json::json!({
+            "project_id": project_id,
+            "file_path": requirement_path_display
+        })).map_err(|e| format!("Failed to emit event: {}", e))?;
+    }
+
+    Ok(response)
+}
+
+/// 使用 Claude Code (Node.js SDK) 创建/修改文件
+#[tauri::command]
+async fn create_files_with_agent(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+    project_id: String,
+    user_input: String,
+) -> Result<AgentResponse, String> {
+    // 1. 获取项目元数据
+    let app_project_dir = state.projects_dir.join(&project_id);
+    let meta_file = app_project_dir.join("project.json");
+
+    let project: Project = if meta_file.exists() {
+        let meta_content = fs::read_to_string(&meta_file)
+            .map_err(|e| format!("Failed to read project.json: {}", e))?;
+        serde_json::from_str(&meta_content)
+            .map_err(|e| format!("Failed to parse project.json: {}", e))?
+    } else {
+        return Err("Project not found".to_string());
+    };
+
+    // 2. 确定项目根目录
+    let project_root = if let Some(ref root_path) = project.root_path {
+        PathBuf::from(root_path)
+    } else {
+        app_project_dir.clone()
+    };
+
+    // 3. 读取需求文档路径
+    let requirement_path = project_root.join("requirement.md");
+    let requirement_path_display = requirement_path.display().to_string();
+
+    // 4. 创建 Claude Agent Node 并调用
+    let agent = ClaudeAgentNode::new();
+
+    // 发送进度事件
+    app.emit("agent-progress", serde_json::json!({
+        "project_id": project_id,
+        "stage": "analyzing",
+        "message": "正在分析项目结构和需求..."
+    })).map_err(|e| format!("Failed to emit event: {}", e))?;
+
+    let req = CreateFilesRequest {
+        user_input,
+        project_path: project_root.display().to_string(),
+        requirement_path: requirement_path_display,
+    };
+
+    let response = agent.create_files(&app, req).await?;
+
+    // 5. 发送完成事件通知前端刷新文件树
+    app.emit("files-operation-completed", serde_json::json!({
+        "project_id": project_id,
+        "message": response.message
+    })).map_err(|e| format!("Failed to emit event: {}", e))?;
+
+    println!("📢 files-operation-completed 事件已发送");
+
+    Ok(response)
+}
+
+/// 保存 Claude API Key
+#[tauri::command]
+fn save_claude_api_key(api_key: String) -> Result<(), String> {
+    save_api_key(api_key)
+}
+
+/// 检查是否已配置 API Key
+#[tauri::command]
+fn check_api_key() -> Result<bool, String> {
+    match get_api_key() {
+        Ok(_) => Ok(true),
+        Err(_) => Ok(false),
+    }
+}
+
 fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
@@ -669,6 +830,10 @@ fn main() {
             rename_file,
             delete_file,
             move_file,
+            update_requirement_with_agent,
+            create_files_with_agent,
+            save_claude_api_key,
+            check_api_key,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

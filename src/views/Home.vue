@@ -4,6 +4,9 @@
       <el-button type="primary" :icon="Plus" @click="showCreateDialog = true">
         新建项目
       </el-button>
+      <el-button :icon="Setting" @click="showSettingsDialog = true">
+        设置
+      </el-button>
     </div>
 
     <el-table :data="projects" style="width: 100%" v-loading="loading">
@@ -61,19 +64,24 @@
         <el-button type="primary" @click="createProject" :loading="loading">创建</el-button>
       </template>
     </el-dialog>
+
+    <!-- 设置弹窗 -->
+    <SettingsDialog v-model="showSettingsDialog" />
   </div>
 </template>
 
 <script setup>
 import { ref, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
-import { Plus } from '@element-plus/icons-vue'
+import { Plus, Setting } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import * as tauriApi from '../api/tauri'
+import SettingsDialog from '../components/SettingsDialog.vue'
 
 const router = useRouter()
 const projects = ref([])
 const showCreateDialog = ref(false)
+const showSettingsDialog = ref(false)
 const loading = ref(false)
 
 const newProject = ref({

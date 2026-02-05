@@ -12,7 +12,7 @@
 
     <div class="main-content">
       <!-- 最左侧：文件树 -->
-      <div class="file-tree-panel">
+      <div class="file-tree-panel" :style="{ width: fileTreeWidth + 'px' }">
         <div class="file-tree-header">
           <span>项目文件</span>
           <el-button size="small" :icon="Refresh" @click="loadProjectFiles" circle />
@@ -47,6 +47,12 @@
         </div>
       </div>
 
+      <!-- 分隔条：文件树和编辑器之间 -->
+      <div
+        class="resizer resizer-left"
+        @mousedown="startResize('left', $event)"
+      ></div>
+
       <!-- 左侧：文件编辑区域 -->
       <div class="editor-area">
         <div class="file-selector">
@@ -62,9 +68,6 @@
               <el-icon class="close-tab" @click.stop="closeFile(file.path)"><Close /></el-icon>
             </div>
           </div>
-          <el-button size="small" :icon="Plus" @click="showNewFileDialog = true">
-            新建文件
-          </el-button>
         </div>
 
         <div class="code-editor">
@@ -75,20 +78,34 @@
             @change="onCodeChange"
             @save="saveCurrentFile"
           />
-          <el-empty v-else description="选择或创建文件开始编辑">
-            <template #default>
-              <el-button type="primary" @click="showNewFileDialog = true">新建第一个文件</el-button>
-            </template>
-          </el-empty>
+          <el-empty v-else description="选择文件开始编辑，或在AI助手中创建文件" />
         </div>
       </div>
 
+      <!-- 分隔条：编辑器和AI侧边栏之间 -->
+      <div
+        v-show="sidebarVisible"
+        class="resizer resizer-right"
+        @mousedown="startResize('right', $event)"
+      ></div>
+
       <!-- 右侧：AI对话侧边栏 -->
-      <div :class="['ai-sidebar', { collapsed: !sidebarVisible }]">
-        <div class="sidebar-header">
-          <span>AI 助手</span>
-          <el-button size="small" :icon="Close" @click="toggleSidebar" circle />
+      <div
+        v-show="sidebarVisible"
+        class="ai-sidebar"
+        :style="{ width: aiSidebarWidth + 'px' }"
+      >
+        <!-- 侧边栏收起时的触发按钮 -->
+        <div v-show="!sidebarVisible" class="sidebar-toggle-btn" @click="toggleSidebar">
+          <el-icon :size="20"><ChatDotSquare /></el-icon>
         </div>
+
+        <!-- 侧边栏内容 -->
+        <div v-show="sidebarVisible" class="sidebar-content">
+          <div class="sidebar-header">
+            <span>AI 助手</span>
+            <el-button size="small" :icon="Close" @click="toggleSidebar" circle />
+          </div>
 
         <!-- 功能选择 -->
         <div class="mode-selector">
@@ -99,35 +116,17 @@
           </el-radio-group>
         </div>
 
-        <!-- 需求文档模式 -->
-        <div v-if="aiMode === 'requirement'" class="requirement-mode">
-          <div class="mode-header">
-            <span>当前需求文档预览</span>
-          </div>
-          <div class="requirement-preview" v-html="renderedRequirement"></div>
-        </div>
-
-        <!-- 创建文件模式 -->
-        <div v-if="aiMode === 'create'" class="create-mode">
-          <div class="mode-header">
-            <span>文件创建向导</span>
-          </div>
-          <div class="create-hint">
-            <p>💡 告诉AI你想创建什么文件，例如：</p>
-            <p>"创建一个 main.py 作为入口文件"</p>
-            <p>"添加一个用户管理的 user.go 文件"</p>
-            <p>"创建一个处理数据的 utils.js"</p>
-          </div>
-        </div>
-
         <!-- 聊天历史 -->
         <div class="chat-messages" ref="chatContainer">
           <div
-            v-for="(msg, index) in chatHistory"
+            v-for="(msg, index) in chatHistory[aiMode]"
             :key="index"
-            :class="['message', msg.role]"
+            :class="['message', msg.role, { 'progress-message': msg.isProgress, 'loading-message': msg.isLoading }]"
           >
-            <div class="message-content">{{ msg.content }}</div>
+            <div class="message-content">
+              <span v-if="msg.isLoading" class="loading-dots">正在处理中...</span>
+              <span v-else>{{ msg.content }}</span>
+            </div>
           </div>
           <div v-if="isLoading" class="message assistant">
             <div class="message-content">正在思考...</div>
@@ -153,6 +152,7 @@
               发送 (Ctrl+Enter)
             </el-button>
           </div>
+        </div>
         </div>
       </div>
     </div>
@@ -206,7 +206,7 @@
 </template>
 
 <script setup>
-import { ref, onMounted, computed, nextTick } from 'vue'
+import { ref, onMounted, onUnmounted, computed, nextTick } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import {
   ArrowLeft,
@@ -224,6 +224,7 @@ import {
 import { ElMessage, ElMessageBox } from 'element-plus'
 import MonacoEditor from '../components/MonacoEditor.vue'
 import * as tauriApi from '../api/tauri'
+import { listen } from '@tauri-apps/api/event'
 
 const route = useRoute()
 const router = useRouter()
@@ -257,24 +258,157 @@ const newFileInfo = ref({
   path: ''
 })
 
+// 面板宽度（可拖拽调整）
+const fileTreeWidth = ref(250)
+const editorWidth = ref('auto')  // 自动填充剩余空间
+const aiSidebarWidth = ref(400)
+const isResizing = ref(false)
+const resizerType = ref('')  // 'left' 或 'right'
+
 // AI对话
 const userInput = ref('')
-const chatHistory = ref([
-  {
-    role: 'assistant',
-    content: '你好！我是你的AI助手。\n\n我可以帮你：\n• 💬 回答技术问题\n• 📄 创建新的代码文件\n• 📝 更新需求文档\n• 🔧 修复代码bug\n\n选择上方的模式，然后告诉我你的需求！'
-  }
-])
+// 不同模式的独立会话历史
+const chatHistory = ref({
+  chat: [
+    {
+      role: 'assistant',
+      content: '你好！我是你的AI助手。\n\n我可以帮你解答技术问题、分析代码、提供编程建议等。\n\n有什么问题随时问我！'
+    }
+  ],
+  requirement: [
+    {
+      role: 'assistant',
+      content: '你好！我是需求文档编辑助手。\n\n我可以帮你：\n• 📝 创建新的需求文档\n• ✏️ 更新现有需求\n• 📋 整理功能列表\n• 🔍 完善项目描述\n\n告诉我你的需求，我会帮你更新需求文档。'
+    }
+  ],
+  create: [
+    {
+      role: 'assistant',
+      content: '你好！我是文件创建助手。\n\n我可以帮你创建各种代码文件。\n\n💡 告诉我你想创建什么文件，例如：\n• "创建一个 main.py 入口文件"\n• "添加一个 utils.js 工具函数库"\n• "创建一个 User 用户类"'
+    }
+  ]
+})
 const isLoading = ref(false)
 const chatContainer = ref(null)
 
 // 需求文档
 const requirementContent = ref('')
 
+// 事件监听器存储
+let unlistenRequirementUpdated = null
+
 onMounted(async () => {
   await loadProjectInfo()
   await loadRequirement()
   await loadProjectFiles()
+
+  // 监听需求文档更新事件
+  unlistenRequirementUpdated = await listen('requirement-updated', async (event) => {
+    console.log('=== 收到 requirement-updated 事件 ===', event.payload)
+    const { project_id } = event.payload
+    // 只刷新当前项目的需求文档
+    if (project_id === projectId.value) {
+      console.log('=== 项目ID匹配，开始刷新需求文档 ===')
+      console.log('=== 当前选中的文件:', selectedFile.value, '===')
+
+      // 直接重新加载文件内容（支持 'requirement' 和 'requirement.md' 两种情况）
+      if (selectedFile.value === 'requirement' || selectedFile.value === 'requirement.md') {
+        console.log('=== 正在重新加载 requirement 文件 ===')
+        // 使用 selectedFile 的实际值来加载文件
+        await loadFileContent(selectedFile.value)
+        console.log('=== 文件内容已更新，长度:', fileContent.value.length, '===')
+      } else {
+        console.log('=== 当前未选中 requirement 文件，仅更新 requirementContent ===')
+        await loadRequirement()
+      }
+
+      ElMessage.success('需求文档已更新')
+    }
+  })
+
+  // 监听 Claude 消息事件（用于调试）
+  const unlistenClaudeMessage = await listen('claude-message', async (event) => {
+    console.log('========== 发送给 Claude Agent 的消息 ==========')
+    console.log('模式:', event.payload.mode)
+    console.log('')
+    console.log('--- 系统提示词 ---')
+    console.log(event.payload.system_prompt)
+    console.log('')
+    console.log('--- 用户消息 ---')
+    console.log(event.payload.user_message)
+    console.log('======================================================')
+  })
+
+  // 监听文件创建事件
+  const unlistenFilesCreated = await listen('files-created', async (event) => {
+    console.log('=== 收到 files-created 事件 ===', event.payload)
+    const { project_id, count, first_file } = event.payload
+    // 只刷新当前项目的文件树
+    if (project_id === projectId.value) {
+      console.log('=== 项目ID匹配，开始刷新文件树，创建了', count, '个文件 ===')
+
+      // 刷新文件树
+      await loadProjectFiles()
+
+      // 自动打开第一个创建的文件
+      if (first_file) {
+        console.log('=== 自动打开文件:', first_file, '===')
+        // 添加到打开的文件列表（如果尚未打开）
+        if (!openFiles.value.some(f => f.path === first_file)) {
+          const name = first_file.split('/').pop()
+          openFiles.value.push({ name, path: first_file })
+        }
+        // 选中和加载文件
+        selectFile(first_file)
+      }
+
+      ElMessage.success(`已创建 ${count} 个文件`)
+    }
+  })
+
+  // 监听Agent进度事件
+  const unlistenAgentProgress = await listen('agent-progress', async (event) => {
+    console.log('=== 收到 agent-progress 事件 ===', event.payload)
+    const { project_id, stage, message } = event.payload
+
+    // 只处理当前项目的进度
+    if (project_id === projectId.value) {
+      // 在创建文件模式下显示进度消息
+      if (aiMode.value === 'create') {
+        // 检查是否已经有加载消息，如果有则先移除
+        const loadingIndex = chatHistory.value.create.findIndex(msg => msg.isLoading)
+        if (loadingIndex !== -1) {
+          // 移除加载消息
+          chatHistory.value.create.splice(loadingIndex, 1)
+        }
+
+        // 添加进度消息到聊天历史
+        const progressMessage = {
+          role: 'assistant',
+          content: `⏳ ${message}`,
+          isProgress: true  // 标记为进度消息
+        }
+        chatHistory.value.create.push(progressMessage)
+        scrollToBottom()
+      }
+    }
+  })
+})
+
+onUnmounted(() => {
+  // 取消事件监听
+  if (unlistenRequirementUpdated) {
+    unlistenRequirementUpdated()
+  }
+  if (unlistenClaudeMessage) {
+    unlistenClaudeMessage()
+  }
+  if (unlistenFilesCreated) {
+    unlistenFilesCreated()
+  }
+  if (unlistenAgentProgress) {
+    unlistenAgentProgress()
+  }
 })
 
 async function loadProjectInfo() {
@@ -291,9 +425,25 @@ async function loadProjectInfo() {
 
 async function loadRequirement() {
   try {
-    requirementContent.value = await tauriApi.readProjectFile(projectId.value, 'requirement')
+    // 使用 getSourceFile API 获取最新内容
+    const content = await tauriApi.getSourceFile(projectId.value, 'requirement')
+    requirementContent.value = content
+
+    // 如果用户当前正在查看需求文档，更新编辑器内容
+    if (selectedFile.value === 'requirement' || selectedFile.value === 'requirement.md') {
+      fileContent.value = content
+      originalContent.value = content
+      unsavedChanges.value = false
+    }
   } catch (error) {
-    requirementContent.value = '# 需求文档\n\n暂无需求文档，请在右侧AI助手中创建。'
+    const defaultContent = '# 需求文档\n\n暂无需求文档，请在右侧AI助手中创建。'
+    requirementContent.value = defaultContent
+
+    // 如果用户当前正在查看需求文档，显示默认内容
+    if (selectedFile.value === 'requirement' || selectedFile.value === 'requirement.md') {
+      fileContent.value = defaultContent
+      originalContent.value = defaultContent
+    }
   }
 }
 
@@ -506,6 +656,45 @@ function toggleSidebar() {
   sidebarVisible.value = !sidebarVisible.value
 }
 
+// 面板拖拽调整
+function startResize(type, event) {
+  event.preventDefault()
+  isResizing.value = true
+  resizerType.value = type
+
+  // 添加全局事件监听
+  document.addEventListener('mousemove', handleResize)
+  document.addEventListener('mouseup', stopResize)
+}
+
+function handleResize(event) {
+  if (!isResizing.value) return
+
+  if (resizerType.value === 'left') {
+    // 拖拽左侧分隔条：调整文件树宽度
+    const newWidth = event.clientX
+    if (newWidth >= 150 && newWidth <= 500) {
+      fileTreeWidth.value = newWidth
+    }
+  } else if (resizerType.value === 'right') {
+    // 拖拽右侧分隔条：调整AI侧边栏宽度
+    const containerWidth = document.querySelector('.main-content').offsetWidth
+    const newWidth = containerWidth - event.clientX
+    if (newWidth >= 300 && newWidth <= 800) {
+      aiSidebarWidth.value = newWidth
+    }
+  }
+}
+
+function stopResize() {
+  isResizing.value = false
+  resizerType.value = ''
+
+  // 移除全局事件监听
+  document.removeEventListener('mousemove', handleResize)
+  document.removeEventListener('mouseup', stopResize)
+}
+
 function getPlaceholder() {
   switch (aiMode.value) {
     case 'chat':
@@ -611,8 +800,8 @@ async function sendMessage() {
   const message = userInput.value.trim()
   if (!message || isLoading.value) return
 
-  // 添加用户消息
-  chatHistory.value.push({
+  // 添加用户消息到当前模式的会话历史
+  chatHistory.value[aiMode.value].push({
     role: 'user',
     content: message
   })
@@ -631,64 +820,75 @@ async function sendMessage() {
 }
 
 async function simulateAIResponse(userMessage) {
-  await new Promise(resolve => setTimeout(resolve, 1500))
-
   let aiResponse = ''
 
   switch (aiMode.value) {
     case 'requirement':
-      // 更新需求文档
-      if (userMessage.includes('添加') || userMessage.includes('新增')) {
-        requirementContent.value += `\n- ${userMessage}`
-        aiResponse = `已将你的需求添加到需求文档中，请查看左侧内容。`
-      } else if (userMessage.includes('修改') || userMessage.includes('更改')) {
-        requirementContent.value += `\n\n- ${userMessage}`
-        aiResponse = `需求文档已更新。`
-      } else {
-        requirementContent.value += `\n\n- ${userMessage}`
-        aiResponse = `好的，我已更新需求文档。`
-      }
+      // 使用 Claude Agent 更新需求文档
+      try {
+        const response = await tauriApi.updateRequirementWithAgent(
+          projectId.value,
+          userMessage
+        )
 
-      // 保存需求文档
-      await tauriApi.writeProjectFile(
-        projectId.value,
-        'requirement',
-        requirementContent.value
-      )
+        if (response.success) {
+          // 需求文档会通过事件自动刷新
+          aiResponse = response.message || '需求文档已更新，请查看左侧内容。'
+        } else {
+          aiResponse = '更新需求文档失败：' + (response.message || '未知错误')
+        }
+      } catch (error) {
+        console.error('调用 Claude Agent 失败:', error)
+        // 检查是否是 API Key 未配置的错误
+        if (error.includes('API key')) {
+          aiResponse = '错误：未配置 Claude API Key。\n\n请先在设置中配置你的 API Key。'
+        } else {
+          aiResponse = '调用 Claude Agent 失败：' + error
+        }
+      }
       break
 
     case 'create':
-      // 创建文件
-      const filenameMatch = userMessage.match(/(\w+\.(?:py|js|ts|go|rs|java|cpp|c|h))/i)
-      if (filenameMatch) {
-        const filename = filenameMatch[0]
-        const codeMap = {
-          'py': `# ${filename}\n\ndef main():\n    print("Hello, World!")\n\nif __name__ == "__main__":\n    main()`,
-          'js': `// ${filename}\n\nfunction main() {\n    console.log("Hello, World!");\n}\n\nmain();`,
-          'ts': `// ${filename}\n\nfunction main(): void {\n    console.log("Hello, World!");\n}\n\nmain();`,
-          'go': `package main\n\nimport "fmt"\n\nfunc main() {\n\tfmt.Println("Hello, World!")\n}`,
-          'rs': `fn main() {\n    println!("Hello, World!");\n}`,
+      // 使用 Claude Agent 创建文件
+      try {
+        // 添加临时的处理中消息（这个会一直显示到完成）
+        const loadingMessage = {
+          role: 'assistant',
+          content: '⏳ 正在处理中...',
+          isLoading: true
         }
+        chatHistory.value.create.push(loadingMessage)
+        scrollToBottom()
 
-        const ext = filename.split('.').pop()
-        const code = codeMap[ext] || codeMap['py']
+        const response = await tauriApi.createFilesWithAgent(
+          projectId.value,
+          userMessage
+        )
 
-        await tauriApi.createFile(projectId.value, filename, code)
+        // 等待一小段时间，让最后的进度消息能被用户看到
+        await new Promise(resolve => setTimeout(resolve, 500))
 
-        // 刷新文件树
-        await loadProjectFiles()
+        if (response.success) {
+          // 清理所有进度消息和加载消息，准备显示总结
+          chatHistory.value.create = chatHistory.value.create.filter(msg => !msg.isProgress && !msg.isLoading)
 
-        // 添加到打开的文件
-        if (!openFiles.value.some(f => f.path === filename)) {
-          openFiles.value.push({ name: filename, path: filename })
+          // 添加总结消息
+          aiResponse = `✅ ${response.message || '文件创建完成'}`
+        } else {
+          // 出错时也清理消息
+          chatHistory.value.create = chatHistory.value.create.filter(msg => !msg.isProgress && !msg.isLoading)
+          aiResponse = '❌ 创建文件失败：' + (response.message || '未知错误')
         }
+      } catch (error) {
+        console.error('调用 Claude Agent 失败:', error)
+        // 移除加载消息
+        chatHistory.value.create = chatHistory.value.create.filter(msg => !msg.isLoading)
 
-        // 选中新文件
-        await selectFile(filename)
-
-        aiResponse = `已创建文件：${filename}\n\n文件已自动打开，你可以开始编辑了。`
-      } else {
-        aiResponse = `请告诉我你想创建什么文件，例如：\n\n• "创建 main.py 入口文件"\n• "添加 utils.js 工具函数"\n• "创建 User.ts 用户类"`
+        if (error.includes('API key')) {
+          aiResponse = '❌ 错误：未配置 Claude API Key。\n\n请先在设置中配置你的 API Key。'
+        } else {
+          aiResponse = '❌ 调用 Claude Agent 失败：' + error
+        }
       }
       break
 
@@ -708,7 +908,8 @@ async function simulateAIResponse(userMessage) {
       break
   }
 
-  chatHistory.value.push({
+  // 添加助手回复到当前模式的会话历史
+  chatHistory.value[aiMode.value].push({
     role: 'assistant',
     content: aiResponse
   })
@@ -723,19 +924,6 @@ function scrollToBottom() {
     }
   })
 }
-
-const renderedRequirement = computed(() => {
-  if (!requirementContent.value) return ''
-
-  return requirementContent.value
-    .replace(/^# (.*$)/gim, '<h1>$1</h1>')
-    .replace(/^## (.*$)/gim, '<h2>$1</h2>')
-    .replace(/^### (.*$)/gim, '<h3>$1</h3>')
-    .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
-    .replace(/^- (.*$)/gim, '<li>$1</li>')
-    .replace(/\n\n/g, '</p><p>')
-    .replace(/\n/g, '<br>')
-})
 
 function getLanguage(filename) {
   const ext = filename.split('.').pop()
@@ -808,15 +996,39 @@ function goBack() {
   flex: 1;
   display: flex;
   overflow: hidden;
+  position: relative;
 }
 
 .file-tree-panel {
-  width: 250px;
   display: flex;
   flex-direction: column;
   border-right: 1px solid #e4e7ed;
   background-color: #fafafa;
   overflow: hidden;
+  flex-shrink: 0;
+}
+
+/* 分隔条 */
+.resizer {
+  width: 4px;
+  background-color: #e4e7ed;
+  cursor: col-resize;
+  transition: background-color 0.2s;
+  flex-shrink: 0;
+  position: relative;
+  z-index: 10;
+}
+
+.resizer:hover {
+  background-color: #409eff;
+}
+
+.resizer-left {
+  /* 左侧分隔条样式 */
+}
+
+.resizer-right {
+  /* 右侧分隔条样式 */
 }
 
 .file-tree-header {
@@ -920,17 +1132,42 @@ function goBack() {
 }
 
 .ai-sidebar {
-  width: 400px;
   display: flex;
   flex-direction: column;
   border-left: 1px solid #e4e7ed;
   background-color: #fafafa;
-  transition: all 0.3s ease;
+  flex-shrink: 0;
 }
 
-.ai-sidebar.collapsed {
-  width: 0;
-  border-left: none;
+/* 侧边栏收起时的触发按钮 */
+.sidebar-toggle-btn {
+  position: fixed;
+  right: 0;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 40px;
+  height: 100px;
+  background-color: #409eff;
+  border-radius: 8px 0 0 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  color: white;
+  box-shadow: -2px 0 8px rgba(0, 0, 0, 0.15);
+  transition: all 0.3s ease;
+  z-index: 1000;
+}
+
+.sidebar-toggle-btn:hover {
+  background-color: #66b1ff;
+  width: 45px;
+}
+
+.sidebar-content {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
 }
 
 .sidebar-header {
@@ -1043,6 +1280,32 @@ function goBack() {
 .message-content {
   white-space: pre-wrap;
   word-break: break-word;
+}
+
+/* 进度消息样式 */
+.message.progress-message {
+  background-color: #f0f9ff;
+  border: 1px solid #91caff;
+  opacity: 0.9;
+}
+
+.message.loading-message {
+  background-color: #f0f9ff;
+  border: 1px solid #91caff;
+}
+
+.loading-dots {
+  display: inline-block;
+  animation: pulse 1.5s ease-in-out infinite;
+}
+
+@keyframes pulse {
+  0%, 100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.5;
+  }
 }
 
 .chat-input {

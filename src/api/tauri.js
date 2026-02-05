@@ -139,3 +139,39 @@ export async function moveFile(projectId, source, target) {
     target
   })
 }
+
+// ===== Claude Agent API =====
+
+/**
+ * 使用 Claude Agent 更新需求文档
+ */
+export async function updateRequirementWithAgent(projectId, userInput) {
+  return invoke('update_requirement_with_agent', {
+    projectId,
+    userInput
+  })
+}
+
+/**
+ * 使用 Claude Agent 创建文件
+ */
+export async function createFilesWithAgent(projectId, userInput) {
+  return invoke('create_files_with_agent', {
+    projectId,
+    userInput
+  })
+}
+
+/**
+ * 保存 Claude API Key
+ */
+export async function saveClaudeApiKey(apiKey) {
+  return invoke('save_claude_api_key', { apiKey })
+}
+
+/**
+ * 检查是否已配置 API Key
+ */
+export async function checkApiKey() {
+  return invoke('check_api_key')
+}
