@@ -261,7 +261,6 @@ impl OpenCodeClient {
             message_id: None,
             agent,
             model,
-            system: None,
             parts: vec![MessagePart {
                 part_type: "text".to_string(),
                 text: Some(message.to_string()),
@@ -309,7 +308,6 @@ impl OpenCodeClient {
             message_id: None,
             agent,
             model,
-            system: None,
             parts: vec![MessagePart {
                 part_type: "text".to_string(),
                 text: Some(message.to_string()),
