@@ -91,8 +91,8 @@
           >
             <div style="display: flex; justify-content: space-between; align-items: center;">
               <span>{{ provider.display_name || provider.name }}</span>
-              <el-tag v-if="provider.models && provider.models.length > 0" size="small" type="info">
-                {{ provider.models.length }} 个模型
+              <el-tag v-if="getModelCount(provider) > 0" size="small" type="info">
+                {{ getModelCount(provider) }} 个模型
               </el-tag>
             </div>
           </el-option>
@@ -237,7 +237,18 @@ const providers = ref([])
 const currentModels = computed(() => {
   if (!form.value.provider) return []
   const provider = providers.value.find(p => p.id === form.value.provider)
-  return provider?.models || []
+  if (!provider?.models) return []
+
+  // models 可能是数组或对象
+  const models = provider.models
+  if (Array.isArray(models)) {
+    return models
+  }
+  // 如果是对象，提取所有的键（模型 ID）
+  if (typeof models === 'object' && models !== null) {
+    return Object.keys(models)
+  }
+  return []
 })
 
 const testButtonText = computed(() => {
@@ -250,10 +261,7 @@ const testButtonText = computed(() => {
 watch(() => props.modelValue, async (val) => {
   if (val) {
     await loadConfig()
-    // 自动刷新 providers（如果配置了 Server）
-    if (form.value.serverUrl) {
-      await refreshProviders()
-    }
+    // 不自动刷新 providers，让用户手动点击刷新按钮
   }
 })
 
@@ -285,6 +293,17 @@ function hasProvider(providerId) {
   return providers.value.some(p => p.id === providerId)
 }
 
+function getModelCount(provider) {
+  if (!provider?.models) return 0
+  if (Array.isArray(provider.models)) {
+    return provider.models.length
+  }
+  if (typeof provider.models === 'object' && provider.models !== null) {
+    return Object.keys(provider.models).length
+  }
+  return 0
+}
+
 function getProviderHint() {
   if (providers.value.length === 0) {
     return '请先点击"刷新可用的提供商"按钮获取 Provider 列表'
@@ -293,8 +312,20 @@ function getProviderHint() {
     return '请选择一个 AI Provider'
   }
   const provider = providers.value.find(p => p.id === form.value.provider)
-  if (provider && provider.models && provider.models.length > 0) {
-    return `可用模型：${provider.models.slice(0, 5).join(', ')}${provider.models.length > 5 ? '...' : ''}`
+  if (!provider?.models) {
+    return '选择一个 Provider 后查看可用模型'
+  }
+
+  // 获取模型列表
+  let modelList = []
+  if (Array.isArray(provider.models)) {
+    modelList = provider.models
+  } else if (typeof provider.models === 'object' && provider.models !== null) {
+    modelList = Object.keys(provider.models)
+  }
+
+  if (modelList.length > 0) {
+    return `可用模型：${modelList.slice(0, 5).join(', ')}${modelList.length > 5 ? '...' : ''}`
   }
   return '选择一个 Provider 后查看可用模型'
 }

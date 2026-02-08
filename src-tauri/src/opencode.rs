@@ -71,8 +71,9 @@ pub struct Provider {
     pub display_name: String,
     #[serde(default)]
     pub homepage: String,
+    /// models 可能是字符串数组或对象（map），使用 Value 灵活处理
     #[serde(default)]
-    pub models: Vec<String>,
+    pub models: serde_json::Value,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
