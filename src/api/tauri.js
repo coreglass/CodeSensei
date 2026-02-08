@@ -140,10 +140,10 @@ export async function moveFile(projectId, source, target) {
   })
 }
 
-// ===== Claude Agent API =====
+// ===== OpenCode API =====
 
 /**
- * 使用 Claude Agent 更新需求文档
+ * 使用 OpenCode 更新需求文档
  */
 export async function updateRequirementWithAgent(projectId, userInput) {
   return invoke('update_requirement_with_agent', {
@@ -153,7 +153,7 @@ export async function updateRequirementWithAgent(projectId, userInput) {
 }
 
 /**
- * 使用 Claude Agent 创建文件
+ * 使用 OpenCode 创建文件
  */
 export async function createFilesWithAgent(projectId, userInput) {
   return invoke('create_files_with_agent', {
@@ -163,15 +163,58 @@ export async function createFilesWithAgent(projectId, userInput) {
 }
 
 /**
- * 保存 Claude API Key
+ * 获取 OpenCode 配置
  */
-export async function saveClaudeApiKey(apiKey) {
-  return invoke('save_claude_api_key', { apiKey })
+export async function getOpenCodeConfig() {
+  return invoke('get_opencode_config')
 }
 
 /**
- * 检查是否已配置 API Key
+ * 保存 OpenCode 配置
  */
-export async function checkApiKey() {
-  return invoke('check_api_key')
+export async function saveOpenCodeConfig(config) {
+  return invoke('save_opencode_config', { config })
+}
+
+/**
+ * 测试 OpenCode Server 连接
+ */
+export async function testOpenCodeConnection(serverUrl, username, password) {
+  return invoke('test_opencode_connection', {
+    serverUrl,
+    username,
+    password
+  })
+}
+
+/**
+ * 更新 Server URL
+ */
+export async function updateServerUrl(serverUrl) {
+  return invoke('update_server_url', { serverUrl })
+}
+
+/**
+ * 更新认证信息
+ */
+export async function updateAuth(username, password) {
+  return invoke('update_auth', { username, password })
+}
+
+/**
+ * 更新 Provider 配置
+ */
+export async function updateProviderConfig(provider, model) {
+  return invoke('update_provider_config', { provider, model })
+}
+
+/**
+ * 获取可用的 AI Providers
+ */
+export async function getAvailableProviders(serverUrl, username, password) {
+  return invoke('get_available_providers', {
+    serverUrl,
+    username,
+    password
+  })
 }

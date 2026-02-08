@@ -1,7 +1,7 @@
 {
   "name": "code-sensei",
   "version": "0.1.0",
-  "description": "教学型编程助手",
+  "description": "教学型编程助手 - OpenCode 版本",
   "type": "module",
   "scripts": {
     "dev": "vite",
