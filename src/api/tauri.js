@@ -153,12 +153,32 @@ export async function updateRequirementWithAgent(projectId, userInput) {
 }
 
 /**
- * 使用 OpenCode 创建文件
+ * 使用 OpenCode 创建文件（同步版本）
  */
 export async function createFilesWithAgent(projectId, userInput) {
   return invoke('create_files_with_agent', {
     projectId,
     userInput
+  })
+}
+
+/**
+ * 使用 OpenCode 创建文件（异步版本 - 立即返回 session_id）
+ */
+export async function createFilesWithAgentAsync(projectId, userInput) {
+  return invoke('create_files_with_agent_async', {
+    projectId,
+    userInput
+  })
+}
+
+/**
+ * 获取会话消息列表（用于轮询）
+ */
+export async function getSessionMessages(sessionId, limit) {
+  return invoke('get_session_messages', {
+    sessionId,
+    limit
   })
 }
 

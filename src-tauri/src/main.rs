@@ -818,7 +818,167 @@ async fn update_requirement_with_agent(
     })
 }
 
-/// 使用 OpenCode 创建/修改文件
+/// 使用 OpenCode 创建/修改文件（异步版本）
+#[tauri::command]
+async fn create_files_with_agent_async(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+    project_id: String,
+    user_input: String,
+) -> Result<String, String> {
+    println!("========== 使用 OpenCode 创建/修改文件（异步）==========");
+    println!("项目 ID: {}", project_id);
+    println!("用户输入: {}", user_input);
+
+    // 1. 获取项目元数据
+    let app_project_dir = state.projects_dir.join(&project_id);
+    let meta_file = app_project_dir.join("project.json");
+
+    let project: Project = if meta_file.exists() {
+        let meta_content = fs::read_to_string(&meta_file)
+            .map_err(|e| format!("无法读取 project.json: {}", e))?;
+        serde_json::from_str(&meta_content)
+            .map_err(|e| format!("无法解析 project.json: {}", e))?
+    } else {
+        return Err("项目不存在".to_string());
+    };
+
+    // 2. 确定项目根目录
+    let project_root = if let Some(ref root_path) = project.root_path {
+        PathBuf::from(root_path)
+    } else {
+        app_project_dir.clone()
+    };
+
+    let project_root_str = project_root.display().to_string();
+
+    // 3. 读取需求文档（如果存在）
+    let requirement_path = project_root.join("requirement.md");
+    let requirement_content = if requirement_path.exists() {
+        fs::read_to_string(&requirement_path).unwrap_or_default()
+    } else {
+        String::new()
+    };
+
+    // 4. 获取 OpenCode 配置
+    let config = get_config();
+    println!("OpenCode Server: {}", config.server_url);
+
+    // 5. 创建 OpenCode 客户端
+    let client = OpenCodeClient::new(
+        config.server_url.clone(),
+        config.username.clone(),
+        config.password.clone(),
+    );
+
+    // 6. 检查服务器连接
+    println!("检查 OpenCode Server 连接...");
+    let health = client.health_check().await
+        .map_err(|e| format!("无法连接到 OpenCode Server: {}\n请检查 Server 是否运行，地址是否正确", e))?;
+    println!("Server 版本: {}", health.version);
+
+    // 发送进度事件
+    let _ = app.emit("agent-progress", serde_json::json!({
+        "stage": "analyzing",
+        "message": "正在分析项目结构和需求..."
+    }));
+
+    // 7. 构建提示词
+    let prompt = if requirement_content.is_empty() {
+        format!(
+            "你是 Code Sensei 的代码生成助手。
+
+## 项目路径
+{}
+
+## 用户需求
+{}
+
+## 任务
+根据用户需求在项目中创建或修改文件。
+
+## 工作原则
+- 先用 Read 工具读取现有文件，了解项目结构
+- 优先修改现有文件，避免创建不必要的文件
+- 保持代码风格一致
+- 确保代码可以运行
+
+请简要说明你修改了哪些文件。",
+            project_root_str, user_input
+        )
+    } else {
+        format!(
+            "你是 Code Sensei 的代码生成助手。
+
+## 项目路径
+{}
+
+## 需求文档内容
+```markdown{}
+```
+
+## 用户需求
+{}
+
+## 任务
+根据需求文档和用户需求，在项目中创建或修改文件。
+
+## 工作原则
+- 先用 Read 工具读取现有文件，了解项目结构
+- 优先修改现有文件，避免创建不必要的文件
+- 保持代码风格一致
+- 确保代码可以运行
+
+请简要说明你修改了哪些文件。",
+            project_root_str, requirement_content, user_input
+        )
+    };
+
+    // 8. 创建会话
+    println!("创建 OpenCode 会话...");
+    let session = client.create_session(
+        "代码生成",
+        config.default_provider.clone(),
+        config.default_model.clone(),
+    ).await
+        .map_err(|e| format!("创建会话失败: {}", e))?;
+
+    let session_id = session.id.clone();
+    println!("会话 ID: {}", session_id);
+
+    // 9. 异步发送消息（立即返回）
+    println!("异步发送消息到 OpenCode...");
+    client.send_message_async(&session_id, &prompt, None, None).await
+        .map_err(|e| format!("发送消息失败: {}", e))?;
+
+    println!("消息已异步发送，会话 ID: {}", session_id);
+
+    // 发送事件通知前端开始轮询
+    let _ = app.emit("agent-task-started", serde_json::json!({
+        "project_id": project_id,
+        "session_id": session_id
+    }));
+
+    println!("============================================");
+
+    // 返回会话 ID，前端可以用它来轮询结果
+    Ok(session_id)
+}
+
+/// 获取会话中的消息列表（用于轮询）
+#[tauri::command]
+async fn get_session_messages(session_id: String, limit: Option<u32>) -> Result<Vec<opencode::Message>, String> {
+    let config = get_config();
+    let client = OpenCodeClient::new(
+        config.server_url.clone(),
+        config.username.clone(),
+        config.password.clone(),
+    );
+
+    client.get_messages(&session_id, limit).await
+}
+
+/// 使用 OpenCode 创建/修改文件（同步版本，保留用于简单任务）
 #[tauri::command]
 async fn create_files_with_agent(
     app: tauri::AppHandle,
@@ -1144,6 +1304,8 @@ fn main() {
             move_file,
             update_requirement_with_agent,
             create_files_with_agent,
+            create_files_with_agent_async,
+            get_session_messages,
             // OpenCode 配置命令
             get_opencode_config,
             save_opencode_config,

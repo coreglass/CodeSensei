@@ -849,45 +849,111 @@ async function simulateAIResponse(userMessage) {
       break
 
     case 'create':
-      // 使用 Claude Agent 创建文件
+      // 使用 OpenCode Agent 创建文件（异步版本 - 实时显示执行过程）
       try {
-        // 添加临时的处理中消息（这个会一直显示到完成）
-        const loadingMessage = {
+        // 添加开始消息
+        const startMessage = {
           role: 'assistant',
-          content: '⏳ 正在处理中...',
-          isLoading: true
+          content: '🚀 开始处理你的请求...',
+          isProgress: true
         }
-        chatHistory.value.create.push(loadingMessage)
+        chatHistory.value.create.push(startMessage)
         scrollToBottom()
 
-        const response = await tauriApi.createFilesWithAgent(
+        // 使用异步 API，立即返回 session_id
+        const sessionId = await tauriApi.createFilesWithAgentAsync(
           projectId.value,
           userMessage
         )
 
-        // 等待一小段时间，让最后的进度消息能被用户看到
-        await new Promise(resolve => setTimeout(resolve, 500))
+        console.log('会话已创建，ID:', sessionId)
 
-        if (response.success) {
-          // 清理所有进度消息和加载消息，准备显示总结
-          chatHistory.value.create = chatHistory.value.create.filter(msg => !msg.isProgress && !msg.isLoading)
+        // 更新消息，开始轮询
+        const pollingMessage = {
+          role: 'assistant',
+          content: '⏳ AI Agent 正在工作，正在执行任务...\n\n你可以看到详细的执行过程。',
+          isProgress: true
+        }
+        // 替换最后一条消息
+        chatHistory.value.create[chatHistory.value.create.length - 1] = pollingMessage
+        scrollToBottom()
 
-          // 添加总结消息
-          aiResponse = `✅ ${response.message || '文件创建完成'}`
+        // 轮询获取消息，显示实时对话过程
+        let lastMessageCount = 0
+        let completed = false
+        let maxAttempts = 120 // 最多轮询 2 分钟（每秒一次）
+        let attempts = 0
+
+        while (!completed && attempts < maxAttempts) {
+          attempts++
+          await new Promise(resolve => setTimeout(resolve, 1000)) // 等待 1 秒
+
+          try {
+            const messages = await tauriApi.getSessionMessages(sessionId, 50)
+
+            // 如果有新消息
+            if (messages.length > lastMessageCount) {
+              // 清除之前的进度消息
+              chatHistory.value.create = chatHistory.value.create.filter(msg => !msg.isProgress)
+
+              // 添加新的消息
+              for (let i = lastMessageCount; i < messages.length; i++) {
+                const msg = messages[i]
+                const content = msg.parts
+                  ?.map(part => part.text || part.reasoning || '')
+                  .join('\n') || ''
+
+                if (content) {
+                  chatHistory.value.create.push({
+                    role: msg.role === 'user' ? 'user' : 'assistant',
+                    content: content
+                  })
+                }
+              }
+
+              lastMessageCount = messages.length
+              scrollToBottom()
+
+              // 检查是否完成（最后一条消息状态为 completed）
+              const lastMsg = messages[messages.length - 1]
+              if (lastMsg && lastMsg.status === 'completed') {
+                completed = true
+              }
+            }
+          } catch (pollError) {
+            console.error('轮询消息失败:', pollError)
+            // 继续轮询，不要中断
+          }
+        }
+
+        // 清除进度消息
+        chatHistory.value.create = chatHistory.value.create.filter(msg => !msg.isProgress)
+
+        // 刷新文件树
+        await loadProjectFiles()
+
+        // 添加完成消息
+        if (completed) {
+          aiResponse = '✅ 任务已完成！\n\n请查看上方对话了解详细执行过程，文件已更新到左侧文件树。'
         } else {
-          // 出错时也清理消息
-          chatHistory.value.create = chatHistory.value.create.filter(msg => !msg.isProgress && !msg.isLoading)
-          aiResponse = '❌ 创建文件失败：' + (response.message || '未知错误')
+          aiResponse = '⚠️ 任务仍在后台执行中，你可以稍后查看结果。\n\n请刷新文件树查看最新变化。'
+        }
+
+        // 超时删除临时会话
+        try {
+          // 可选：调用删除会话 API
+        } catch (e) {
+          console.error('删除会话失败:', e)
         }
       } catch (error) {
-        console.error('调用 Claude Agent 失败:', error)
-        // 移除加载消息
-        chatHistory.value.create = chatHistory.value.create.filter(msg => !msg.isLoading)
+        console.error('调用 OpenCode Agent 失败:', error)
+        // 移除进度消息
+        chatHistory.value.create = chatHistory.value.create.filter(msg => !msg.isProgress)
 
-        if (error.includes('API key')) {
-          aiResponse = '❌ 错误：未配置 Claude API Key。\n\n请先在设置中配置你的 API Key。'
+        if (error.includes('API key') || error.includes('配置')) {
+          aiResponse = '❌ 错误：请先在设置中配置 OpenCode Server。'
         } else {
-          aiResponse = '❌ 调用 Claude Agent 失败：' + error
+          aiResponse = '❌ 调用 OpenCode Agent 失败：\n\n' + error
         }
       }
       break

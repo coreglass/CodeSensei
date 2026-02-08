@@ -100,9 +100,10 @@ pub struct OpenCodeClient {
 
 impl OpenCodeClient {
     pub fn new(server_url: String, username: String, password: Option<String>) -> Self {
+        // 设置更长的超时时间（10分钟），因为 AI Agent 任务可能需要较长时间
         let client = Client::builder()
-            .timeout(Duration::from_secs(120))
-            .connect_timeout(Duration::from_secs(10))
+            .timeout(Duration::from_secs(600))
+            .connect_timeout(Duration::from_secs(30))
             .build()
             .expect("Failed to create HTTP client");
 

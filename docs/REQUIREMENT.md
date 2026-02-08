@@ -92,6 +92,7 @@ Code Sensei 是一款基于 Tauri + Vue 3 构建的教学型编程助手，旨�
 - [x] Provider 配置管理
 - [x] 需求文档 AI 生成
 - [x] 代码生成与修改功能
+- [x] **实时对话过程显示**（异步轮询）
 - [x] 实时进度反馈
 
 ### Phase 3: 优化与扩展 🚧
@@ -146,6 +147,59 @@ npm run build && cd src-tauri && cargo build --release
 - 直接运行: `src-tauri/target/release/code-sensei.exe`
 - NSIS 安装包: `src-tauri/target/release/bundle/nsis/Code Sensei_0.1.0_x64-setup.exe`
 - MSI 安装包: `src-tauri/target/release/bundle/msi/Code Sensei_0.1.0_x64_en-US.msi`
+
+#### 3. 实时显示 AI Agent 执行过程 ✨
+**问题**: 用户反馈 AI Agent 执行时间过长，UI 显示超时错误，但后台任务实际已完成
+
+**原因**:
+1. HTTP 请求超时时间设置为 120 秒，复杂任务可能需要更长时间
+2. 同步等待模式下，用户无法看到执行过程，体验不佳
+
+**解决方案**:
+
+**方案 1: 增加超时时间**（临时修复）
+- 将 HTTP 请求超时从 120 秒增加到 **600 秒（10 分钟）**
+- 连接超时从 10 秒增加到 30 秒
+- 修改文件: `src-tauri/src/opencode.rs`
+
+**方案 2: 异步 API + 实时轮询**（完整方案）✨
+- **后端新增**:
+  - `create_files_with_agent_async`: 异步发送消息，立即返回 session_id
+  - `get_session_messages`: 轮询获取会话中的消息列表
+
+- **前端实现**:
+  - 使用异步 API 发起请求，立即返回
+  - 每秒轮询一次，获取新的对话消息
+  - 实时显示 AI Agent 与工具的对话过程
+  - 自动检测任务完成状态
+  - 完成后自动刷新文件树
+
+**用户体验改进**:
+
+*之前*:
+```
+⏳ 正在处理中... (等待 2-3 分钟)
+❌ 调用 Claude Agent 失败: 超时
+```
+
+*现在*:
+```
+🚀 开始处理你的请求...
+⏳ AI Agent 正在工作...
+
+📝 用户: 创建一个 main.py 文件
+🤖 助手: 好的，我来创建 main.py 文件...
+🤖 助手: 我正在读取现有的文件...
+🤖 助手: 我正在创建 main.py...
+
+✅ 任务已完成！请查看上方对话了解详细执行过程。
+```
+
+**修改文件**:
+- `src-tauri/src/opencode.rs`: 增加超时时间
+- `src-tauri/src/main.rs`: 添加异步命令
+- `src/api/tauri.js`: 添加异步 API 封装
+- `src/views/Project.vue`: 实现轮询逻辑和实时显示
 
 ## 配置说明
 
