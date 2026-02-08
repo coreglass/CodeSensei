@@ -162,16 +162,30 @@ impl OpenCodeClient {
             .await
             .map_err(|e| format!("获取 Providers 失败: {}", e))?;
 
-        if !response.status().is_success() {
-            return Err(format!("Server 返回错误: {}", response.status()));
+        let status = response.status();
+        if !status.is_success() {
+            let error_text = response
+                .text()
+                .await
+                .unwrap_or_else(|_| "无法读取错误信息".to_string());
+            return Err(format!("Server 返回错误 ({}): {}", status, error_text));
         }
 
-        let result: ProviderListResponse = response
-            .json::<ProviderListResponse>()
+        // 先获取原始文本，以便在解析失败时查看内容
+        let response_text = response
+            .text()
             .await
-            .map_err(|e| format!("解析 Providers 失败: {}", e))?;
+            .map_err(|e| format!("读取响应文本失败: {}", e))?;
 
-        Ok(result.all)
+        // 尝试解析，如果失败则显示原始响应
+        match serde_json::from_str::<ProviderListResponse>(&response_text) {
+            Ok(result) => Ok(result.all),
+            Err(e) => {
+                // 打印实际收到的 JSON，方便调试
+                eprintln!("解析 Providers 失败，收到的响应:\n{}", response_text);
+                Err(format!("解析 Providers 失败: {}\n响应内容: {}", e, response_text))
+            }
+        }
     }
 
     /// 获取配置文件中的 Providers（包含模型列表）
@@ -189,16 +203,30 @@ impl OpenCodeClient {
             .await
             .map_err(|e| format!("获取配置 Providers 失败: {}", e))?;
 
-        if !response.status().is_success() {
-            return Err(format!("Server 返回错误: {}", response.status()));
+        let status = response.status();
+        if !status.is_success() {
+            let error_text = response
+                .text()
+                .await
+                .unwrap_or_else(|_| "无法读取错误信息".to_string());
+            return Err(format!("Server 返回错误 ({}): {}", status, error_text));
         }
 
-        let result: ConfigProvidersResponse = response
-            .json::<ConfigProvidersResponse>()
+        // 先获取原始文本，以便在解析失败时查看内容
+        let response_text = response
+            .text()
             .await
-            .map_err(|e| format!("解析配置 Providers 失败: {}", e))?;
+            .map_err(|e| format!("读取响应文本失败: {}", e))?;
 
-        Ok(result.providers)
+        // 尝试解析，如果失败则显示原始响应
+        match serde_json::from_str::<ConfigProvidersResponse>(&response_text) {
+            Ok(result) => Ok(result.providers),
+            Err(e) => {
+                // 打印实际收到的 JSON，方便调试
+                eprintln!("解析配置 Providers 失败，收到的响应:\n{}", response_text);
+                Err(format!("解析配置 Providers 失败: {}\n响应内容: {}", e, response_text))
+            }
+        }
     }
 
     /// 创建新会话
